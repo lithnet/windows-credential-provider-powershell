@@ -1,0 +1,255 @@
+pool:
+  vmImage: 'windows-latest'
+
+variables:
+  - name: buildPlatform 
+    value: 'Any CPU'
+  - name: buildConfiguration
+    value: 'Release'
+  - name: build.version.major
+    value: 1
+  - name: build.version.minor
+    value: 0
+  - name: build.version.revision
+    value: $[counter(format('{0}.{1}', variables['build.version.major'], variables['build.version.minor']), 0)]
+  - name: build.version.suffix
+    value: -beta1
+  - name: build.version
+    value: $(build.version.major).$(build.version.minor).$(build.version.revision)$(build.version.suffix)
+  - name: build.versionShort
+    value: $(build.version.major).$(build.version.minor).$(build.version.revision)
+  - name: build.date
+    value: $[format('{0:yyyy}-{0:MM}-{0:dd}T{0:HH}:{0:mm}:{0:ss}', pipeline.startTime)]
+  - group: Azure KeyVault Code Signing
+  - group: PSGallery
+
+name: $(build.version.major).$(build.version.minor).$(build.version.revision)$(build.version.suffix)
+trigger: none
+
+stages:
+
+  displayName: Build credential provider
+  dependsOn: []
+  jobs:
+    - job: "build_provider_job"
+      steps:
+      - task: DotNetCoreCLI@2
+        displayName: dotnet build
+        inputs:
+          command: build
+          arguments: '-c $(buildConfiguration) -p:Version=$(build.version) -p:GeneratePackageOnBuild=false'
+          projects: 'src/Lithnet.CredentialProvider/Lithnet.CredentialProvider.csproj'
+
+      - task: DotNetCoreCLI@2
+        inputs:
+          command: 'custom'
+          custom: 'tool'
+          arguments: 'update --global azuresigntool'
+        displayName: Install AzureSignTool
+
+      - task: PowerShell@2
+        displayName: 'Sign files with AzureSignTool'
+        inputs:
+          targetType: 'inline'
+          script: |
+            $files = @()
+            $files += (Get-ChildItem -Recurse -Path "$(Build.SourcesDirectory)\Lithnet*.dll").FullName
+
+            write-host "Signing $($files.Length) files:"
+            write-output $files
+
+            $cmdargs = @(
+              "sign",
+              "-d", "Lithnet Windows Credential Provider",
+              "-kvu", "$(akv.url)",
+              "-kvi", "$(akv.applicationID)",
+              "-kvs", "$(akv.secret)",
+              "-kvt", "$(akv.tenantId)",
+              "-kvc", "$(akv.certificateName)",
+              "-tr", "http://timestamp.digicert.com",
+              "-td", "sha256"
+            )
+
+            $cmdargs += $files
+        
+            & AzureSignTool $cmdargs
+          failOnStderr: true
+          showWarnings: true
+
+      - task: DotNetCoreCLI@2
+        displayName: dotnet pack
+        inputs:
+          command: 'pack'
+          packagesToPack: 'src/Lithnet.CredentialProvider/Lithnet.CredentialProvider.csproj'
+          packDirectory: '$(Build.ArtifactStagingDirectory)\cp'
+          nobuild: true
+          includesymbols: true
+          versioningScheme: 'byEnvVar'
+          versionEnvVar: 'build.version'
+
+      - task: DotNetCoreCLI@2
+        inputs:
+          command: 'custom'
+          custom: 'tool'
+          arguments: 'update --global NuGetKeyVaultSignTool'
+        displayName: Install NugetKeyVaultSignTool
+
+      - task: PowerShell@2
+        displayName: 'Sign Nuget package'
+        inputs:
+          targetType: 'inline'
+          script: |
+            $cmdargs = @(
+              "sign", "$(Build.ArtifactStagingDirectory)\cp\Lithnet.CredentialProvider.$(build.version).nupkg"
+              "-fd", "sha256",
+              "-kvu", "$(akv.url)",
+              "-kvi", "$(akv.applicationID)",
+              "-kvs", "$(akv.secret)",
+              "-kvt", "$(akv.tenantId)",
+              "-kvc", "$(akv.certificateName)",
+              "-tr", "http://timestamp.digicert.com",
+              "-td", "sha256"
+            )
+        
+            & NuGetKeyVaultSignTool $cmdargs
+          failOnStderr: true
+          showWarnings: true
+
+      - task: PowerShell@2
+        displayName: 'Sign Nuget symbols package'
+        inputs:
+          targetType: 'inline'
+          script: |
+            $cmdargs = @(
+              "sign", "$(Build.ArtifactStagingDirectory)\cp\Lithnet.CredentialProvider.$(build.version).snupkg"
+              "-fd", "sha256",
+              "-kvu", "$(akv.url)",
+              "-kvi", "$(akv.applicationID)",
+              "-kvs", "$(akv.secret)",
+              "-kvt", "$(akv.tenantId)",
+              "-kvc", "$(akv.certificateName)",
+              "-tr", "http://timestamp.digicert.com",
+              "-td", "sha256"
+            )
+        
+            & NuGetKeyVaultSignTool $cmdargs
+          failOnStderr: true
+          showWarnings: true
+
+      - task: DotNetCoreCLI@2
+        displayName: Publish package to internal feed
+        inputs:
+          command: 'push'
+          packagesToPush: '$(Build.ArtifactStagingDirectory)/cp/*.nupkg'
+          nuGetFeedType: 'internal'
+          publishVstsFeed: '91a552bc-359d-4f28-bdbd-f36f71cfdf81'
+
+      - task: DotNetCoreCLI@2
+        displayName: Publish symbols to internal feed
+        inputs:
+          command: 'push'
+          packagesToPush: '$(Build.ArtifactStagingDirectory)/cp/*.snupkg'
+          nuGetFeedType: 'internal'
+          publishVstsFeed: '91a552bc-359d-4f28-bdbd-f36f71cfdf81'
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish nuget artifact
+        inputs:
+          targetPath: '$(Build.ArtifactStagingDirectory)/cp'
+          publishLocation: 'pipeline'
+          artifact: cp
+
+- stage: build_psmodule
+  displayName: Build PowerShell module
+  dependsOn: []
+  jobs:
+    - job: "build_ps_job"
+      steps:
+      - task: DotNetCoreCLI@2
+        displayName: dotnet publish
+        inputs:
+          command: 'publish'
+          publishWebProjects: false
+          projects: 'src/Lithnet.CredentialProvider.Management/Lithnet.CredentialProvider.Management.csproj'
+          arguments: '-c $(buildConfiguration) -p:Version=$(build.version) --output "$(Build.ArtifactStagingDirectory)\ps"'
+          zipAfterPublish: false
+          modifyOutputPath: false
+
+      - task: PowerShell@2
+        displayName: 'Update manifest version'
+        inputs:
+          targetType: 'inline'
+          script: |
+            Update-ModuleManifest -Path "$(Build.ArtifactStagingDirectory)\ps\Lithnet.CredentialProvider.Management.psd1" -ModuleVersion "$(build.versionShort)"
+
+      - task: DotNetCoreCLI@2
+        inputs:
+          command: 'custom'
+          custom: 'tool'
+          arguments: 'update --global azuresigntool'
+        displayName: Install AzureSignTool
+
+      - task: PowerShell@2
+        displayName: 'Sign files with AzureSignTool'
+        inputs:
+          targetType: 'inline'
+          script: |
+            $files = @()
+            $files += (Get-ChildItem -Recurse -Path "$(Build.ArtifactStagingDirectory)\ps\Lithnet*.dll").FullName
+            $files += (Get-ChildItem -Recurse -Path "$(Build.ArtifactStagingDirectory)\ps\Lithnet*.psd1").FullName
+
+            write-host "Signing $($files.Length) files:"
+            write-output $files
+
+            $cmdargs = @(
+              "sign",
+              "-d", "Lithnet Windows Credential Provider",
+              "-kvu", "$(akv.url)",
+              "-kvi", "$(akv.applicationID)",
+              "-kvs", "$(akv.secret)",
+              "-kvt", "$(akv.tenantId)",
+              "-kvc", "$(akv.certificateName)",
+              "-tr", "http://timestamp.digicert.com",
+              "-td", "sha256"
+            )
+
+            $cmdargs += $files
+        
+            & AzureSignTool $cmdargs
+          failOnStderr: true
+          showWarnings: true
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish PS artifact
+        inputs:
+          targetPath: '$(Build.ArtifactStagingDirectory)/ps'
+          publishLocation: 'pipeline'
+          artifact: ps
+
+
+- stage: publish_psgallery
+  displayName: Publish PS Module to PSGallery
+  dependsOn: "build_psmodule"
+  jobs:
+      - deployment: 'PublishPackages'
+        environment: 'PowerShell Gallery'
+        displayName: Publish packages to public PSGallery
+        pool:
+          vmImage: windows-2022 
+        strategy:
+          runOnce:
+            deploy:            
+              steps:
+              - checkout: none
+              - task: DownloadPipelineArtifact@2
+                inputs:
+                  buildType: 'current'
+                  artifactName: 'ps'
+                  targetPath: '$(Pipeline.Workspace)/Lithnet.CredentialProvider.Management'
+              - task: PowerShell@2
+                displayName: 'Upload module to PSGallery'
+                inputs:
+                  targetType: 'inline'
+                  script: |
+                    Publish-Module -Path "$(Pipeline.Workspace)\Lithnet.CredentialProvider.Management" -NuGetApiKey "$(psgallery.apikey)"
+
