@@ -11,11 +11,9 @@ variables:
   - name: build.version.minor
     value: 0
   - name: build.version.revision
-    value: $[counter(format('{0}.{1}', variables['build.version.major'], variables['build.version.minor']), 0)]
-  - name: build.version.suffix
-    value: -beta1
+    value: $[counter(format('{0}.{1}', variables['build.version.major'], variables['build.version.minor']), 1026)]
   - name: build.version
-    value: $(build.version.major).$(build.version.minor).$(build.version.revision)$(build.version.suffix)
+    value: $(build.version.major).$(build.version.minor).$(build.version.revision)
   - name: build.versionShort
     value: $(build.version.major).$(build.version.minor).$(build.version.revision)
   - name: build.date
@@ -23,7 +21,7 @@ variables:
   - group: Azure KeyVault Code Signing
   - group: PSGallery
 
-name: $(build.version.major).$(build.version.minor).$(build.version.revision)$(build.version.suffix)
+name: $(build.version.major).$(build.version.minor).$(build.version.revision)
 trigger: none
 
 stages:
