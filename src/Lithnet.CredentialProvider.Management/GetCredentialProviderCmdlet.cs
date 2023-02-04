@@ -17,31 +17,30 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         protected override void ProcessRecord()
         {
-            if (this.ParameterSetName == "None")
+            if (ParameterSetName == "None")
             {
                 foreach (var item in CredentialProviderRegistrationServices.GetCredentalProviders())
                 {
-                    this.WriteObject(item);
+                    WriteObject(item);
                 }
             }
-            else if (this.ParameterSetName == "GetByFileName")
+            else if (ParameterSetName == "GetByFileName")
             {
-                var assembly = CredentialProviderRegistrationServices.LoadAssembly(this.File);
+                var assembly = CredentialProviderRegistrationServices.LoadAssembly(File);
 
                 foreach (var type in CredentialProviderRegistrationServices.GetCredentialProviders(assembly))
                 {
-                    CredentialProviderRegistrationServices.GetCredentialProvider(type);
-                    this.WriteVerbose($"Got credential provider {type.FullName}");
+                    WriteObject(CredentialProviderRegistrationServices.GetCredentialProvider(type));
                 }
             }
-            else if (this.ParameterSetName == "GetByClsid")
+            else if (ParameterSetName == "GetByClsid")
             {
-                CredentialProviderRegistrationServices.GetCredentialProvider(this.Clsid);
+                WriteObject(CredentialProviderRegistrationServices.GetCredentialProvider(Clsid));
             }
-            else if (this.ParameterSetName == "GetByProgId")
+            else if (ParameterSetName == "GetByProgId")
             {
-                var clsid = CredentialProviderRegistrationServices.GetClsidFromProgId(this.ProgId);
-                CredentialProviderRegistrationServices.GetCredentialProvider(clsid);
+                var clsid = CredentialProviderRegistrationServices.GetClsidFromProgId(ProgId);
+                WriteObject(CredentialProviderRegistrationServices.GetCredentialProvider(clsid));
             }
         }
     }
