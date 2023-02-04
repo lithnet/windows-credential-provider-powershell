@@ -10,8 +10,18 @@ using Microsoft.Win32;
 
 namespace Lithnet.CredentialProvider.RegistrationTool
 {
-    public static class CredentialProviderRegistrationServices
+    public static class RegistrationServices
     {
+        private static RegistryKey GetLocalMachine64()
+        {
+            return RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+        }
+
+        private static RegistryKey GetClassesRoot64()
+        {
+            return RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry64);
+        }
+
         public static bool IsManagedAssembly(string path)
         {
             using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
@@ -31,7 +41,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static IEnumerable<CredentialProviderRegistrationData> GetCredentalProviders()
         {
-            var cpKeys = Registry.LocalMachine.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers");
+            var cpKeys = GetLocalMachine64().OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers");
             foreach (var clsid in cpKeys.GetSubKeyNames())
             {
                 if (Guid.TryParse(clsid, out Guid result))
@@ -44,7 +54,18 @@ namespace Lithnet.CredentialProvider.RegistrationTool
         public static CredentialProviderRegistrationData GetCredentialProvider(Type type)
         {
             var comGuid = GetComGuid(type);
-            return GetCredentialProvider(comGuid);
+            var progId = GetComProgId(type);
+
+            var item = GetCredentialProvider(comGuid);
+            item.ProgId ??= progId;
+            item.CredentialProviderName ??= GetTypeFullName(type);
+            item.DllPath ??= GetTypeAssemblyLocation(type);
+            if (item.DllType == DllType.Unknown)
+            {
+                item.DllType = IsFrameworkType(type) ? DllType.NetFramework : DllType.NetCore;
+            }
+
+            return item;
         }
 
         public static CredentialProviderRegistrationData GetCredentialProvider(string progId)
@@ -59,7 +80,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
             data.Clsid = clsid;
 
-            var clsidKey = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid:B}");
+            var clsidKey = GetClassesRoot64().OpenSubKey($@"CLSID\{clsid:B}");
             if (clsidKey != null)
             {
                 var inprocKey = clsidKey.OpenSubKey("InprocServer32");
@@ -95,9 +116,9 @@ namespace Lithnet.CredentialProvider.RegistrationTool
                 }
             }
 
-            data.ProgId = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid:B}\ProgId")?.GetValue(string.Empty) as string;
+            data.ProgId = GetClassesRoot64().OpenSubKey($@"CLSID\{clsid:B}\ProgId")?.GetValue(string.Empty) as string;
 
-            var cpkey = Registry.LocalMachine.OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{clsid:B}");
+            var cpkey = GetLocalMachine64().OpenSubKey($@"Software\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{clsid:B}");
             data.IsCredentialProviderRegistered = cpkey != null;
 
             if (data.IsCredentialProviderRegistered)
@@ -160,7 +181,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static void DisableCredentialProvider(Guid comGuid)
         {
-            var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
+            var key = GetLocalMachine64().OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
             key?.SetValue("Disabled", 1);
         }
 
@@ -178,7 +199,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static void EnableCredentialProvider(Guid comGuid)
         {
-            var key = Registry.LocalMachine.OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
+            var key = GetLocalMachine64().OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
             key?.SetValue("Disabled", 0);
         }
 
@@ -193,7 +214,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             var comGuid = GetComGuid(t);
             var typeName = GetTypeFullName(t);
 
-            var key = Registry.LocalMachine.CreateSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
+            var key = GetLocalMachine64().CreateSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{comGuid:B}", true);
             key.SetValue(null, typeName);
         }
 
@@ -205,7 +226,8 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         private static void DeleteCredentialProviderRegistration(Guid clsid)
         {
-            Registry.LocalMachine.DeleteSubKeyTree($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{clsid:B}", false);
+            var reg = GetLocalMachine64().OpenSubKey($@"SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers", true);
+            reg.DeleteSubKeyTree($"{clsid:B}", false);
         }
 
         private static void RegisterNetCoreAssembly(Type t)
@@ -219,7 +241,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             var assemblyFile = Path.GetFileNameWithoutExtension(assemblyLocation);
             var comHostLocation = Path.Combine(dir, assemblyFile + ".comhost.dll");
 
-            var rootClsid = Registry.LocalMachine.CreateSubKey($@"Software\Classes\CLSID\{comGuid:B}", true);
+            var rootClsid = GetLocalMachine64().CreateSubKey($@"Software\Classes\CLSID\{comGuid:B}", true);
             rootClsid.SetValue(null, "CoreCLR COMHost Server");
 
             var inprocKey = rootClsid.CreateSubKey("InprocServer32", true);
@@ -229,7 +251,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             var progIdKey = rootClsid.CreateSubKey("ProgId", true);
             progIdKey.SetValue(null, progId);
 
-            var progIdRoot = Registry.LocalMachine.CreateSubKey($@"Software\Classes\{progId}", true);
+            var progIdRoot = GetLocalMachine64().CreateSubKey($@"Software\Classes\{progId}", true);
             progIdRoot.SetValue(null, typeName);
             var progIdSubKey = progIdRoot.CreateSubKey("CLSID");
             progIdSubKey.SetValue(null, comGuid.ToString("B"));
@@ -245,14 +267,16 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         private static void UnregisterClass(Guid? clsid, string progId)
         {
+            var reg = GetLocalMachine64().OpenSubKey(@"Software\Classes", true);
+
             if (clsid != null)
             {
-                Registry.LocalMachine.DeleteSubKeyTree($@"Software\Classes\CLSID\{clsid}", false);
+                reg.DeleteSubKeyTree($@"CLSID\{clsid:B}", false);
             }
 
             if (!string.IsNullOrWhiteSpace(progId))
             {
-                Registry.LocalMachine.DeleteSubKeyTree($@"Software\Classes\{progId}", false);
+                reg.DeleteSubKeyTree(progId, false);
             }
         }
 
@@ -262,7 +286,9 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             var typeName = GetTypeFullName(t);
             var progId = GetComProgId(t);
 
-            var rootClsid = Registry.LocalMachine.CreateSubKey($@"Software\Classes\CLSID\{comGuid:B}", true);
+            var rootReg = GetLocalMachine64().CreateSubKey(@"Software\Classes");
+
+            var rootClsid = rootReg.CreateSubKey($@"CLSID\{comGuid:B}", true);
             rootClsid.SetValue(null, typeName);
 
             rootClsid.CreateSubKey("Implemented Categories");
@@ -279,7 +305,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             var progIdKey = rootClsid.CreateSubKey("ProgId", true);
             progIdKey.SetValue(null, progId);
 
-            var progIdRoot = Registry.LocalMachine.CreateSubKey($@"Software\Classes\{progId}", true);
+            var progIdRoot = rootReg.CreateSubKey(progId, true);
             progIdRoot.SetValue(null, typeName);
             var progIdSubKey = progIdRoot.CreateSubKey("CLSID");
             progIdSubKey.SetValue(null, comGuid.ToString("B"));
@@ -320,7 +346,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static Guid GetClsidFromProgId(string progId)
         {
-            var value = Registry.ClassesRoot.OpenSubKey($@"{progId}\CLSID")?.GetValue(string.Empty) as string;
+            var value = GetClassesRoot64().OpenSubKey($@"{progId}\CLSID")?.GetValue(string.Empty) as string;
 
             if (string.IsNullOrWhiteSpace(value))
             {
@@ -332,11 +358,11 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static string GetProgIdFromClasid(Guid clsid)
         {
-            var value = Registry.ClassesRoot.OpenSubKey($@"CLSID\{clsid:B}\ProgId")?.GetValue(string.Empty) as string;
+            var value = GetClassesRoot64().OpenSubKey($@"CLSID\{clsid:B}\ProgId")?.GetValue(string.Empty) as string;
 
             if (string.IsNullOrWhiteSpace(value))
             {
-                throw new ProgIdNotFoundException($"The ProgId for clsid was not found {clsid}");
+                throw new ProgIdNotFoundException($"The ProgId for clsid was not found {clsid:B}");
             }
 
             return value;
@@ -424,7 +450,7 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             return assembly.GetExportedTypes().Where(t => t.GetInterfaces().Any(ifn => ifn.Name == "ICredentialProvider") && !t.IsAbstract && !t.IsInterface);
         }
 
-        public static Assembly LoadAssembly(string assemblyPath)
+        public static AssemblyFromMetadataLoadContext LoadAssembly(string assemblyPath)
         {
             string assemblyBasePath = Path.GetDirectoryName(assemblyPath);
 
@@ -432,12 +458,11 @@ namespace Lithnet.CredentialProvider.RegistrationTool
             paths.AddRange(Directory.GetFiles(assemblyBasePath));
             paths.Add(typeof(object).Assembly.Location);
 
-            // needs to be the .net fx or net core fx location
             paths.AddRange(Directory.GetFiles(RuntimeEnvironment.GetRuntimeDirectory(), "*.dll"));
 
             var resolver = new PathAssemblyResolver(paths);
             MetadataLoadContext mlc = new MetadataLoadContext(resolver);
-            return mlc.LoadFromAssemblyPath(assemblyPath);
+            return new AssemblyFromMetadataLoadContext(mlc.LoadFromAssemblyPath(assemblyPath), mlc);
         }
     }
 }
