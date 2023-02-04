@@ -3,9 +3,12 @@
 # Lithnet.CredentialProvider.Management PowerShell module
 Lithnet.CredentialProvider.Management is a PowerShell module for managing .NET-based Windows Credential Providers.
 
+![](https://img.shields.io/powershellgallery/v/Lithnet.CredentialProvider.Management)
+![](https://img.shields.io/powershellgallery/dt/Lithnet.CredentialProvider.Management)
+
 ## Getting started
 
-Install or download the module from the PowerShell Gallery
+Install or download the module from the [PowerShell Gallery](https://www.powershellgallery.com/packages/Lithnet.CredentialProvider.Management)
 
 ```powershell
 Install-Module Lithnet.CredentialProvider.Management
