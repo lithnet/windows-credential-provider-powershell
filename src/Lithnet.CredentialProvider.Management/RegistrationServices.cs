@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -447,7 +448,32 @@ namespace Lithnet.CredentialProvider.RegistrationTool
 
         public static IEnumerable<Type> GetCredentialProviders(Assembly assembly)
         {
-            return assembly.GetExportedTypes().Where(t => t.GetInterfaces().Any(ifn => ifn.Name == "ICredentialProvider") && !t.IsAbstract && !t.IsInterface);
+            List<Type> types = new List<Type>();
+
+            foreach (var type in assembly.GetExportedTypes())
+            {
+                if (type.IsAbstract || type.IsInterface)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    foreach (var i in type.GetInterfaces())
+                    {
+                        if (i.Name == "ICredentialProvider")
+                        {
+                            types.Add(type);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Trace.WriteLine($"Type {type} failed with {ex.ToString()}");
+                }
+            }
+
+            return types;
         }
 
         public static AssemblyFromMetadataLoadContext LoadAssembly(string assemblyPath)
